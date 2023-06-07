@@ -11,7 +11,7 @@ def create_app():
     with app.app_context():
         db.create_all()
 
-    from report import report_blueprint
+    from .report import report_blueprint
     app.register_blueprint(report_blueprint)
 
     return app
