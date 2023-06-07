@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Pull Repo') {
+            steps {
+                git branch: 'main', url: 'https://github.com/sirishavsp/IACScanner.git'
+                sh 'echo "Current directory:"'
+                sh 'pwd'
+                sh 'echo "List files:"'
+                sh 'ls -al'
+            }
+        }
+
+        stage('Install Packages') {
+            steps {
+                sh 'pip3 install Flask==2.1.0 python-hcl2==3.0.0 networkx==2.6.2  python-Levenshtein==0.12.2 fuzzywuzzy==0.18.0 radon==4.1.0 tabulate==0.8.9 requests==2.26.0'
+                sh 'pip3 install Flask==2.1.0 SQLAlchemy==1.4.26 Flask-Migrate==3.1.0'
+
+            }
+        }
+       stage('Start Flask Server') {
+            steps {
+                script {
+                    withEnv(["FLASK_APP=wsgi.py"]) {
+                        // Start Flask in the background.
+                        sh 'nohup python3 -m flask run --host=0.0.0.0 --port=5000 > flask.log 2>&1 &'
+                        // Wait for Flask to start. Adjust the sleep time as needed.
+                        sh 'sleep 10'
+                    }
+                }
+            }
+        }
+
+        stage('Run Scanner') {
+            steps {
+                sh 'python3 main.py || echo "Error running scanner"'
+            }
+        }
+        
+        stage('Generate Report') {
+            steps {
+                sh 'python3 codeScanner/ReportGenerator/report.py || echo "Error generating report"'
+                stash includes: 'codeScanner/ReportGenerator/reports/**', name: 'report'
+            }
+        }
+        
+        
+        stage('Change File Permissions') {
+            steps {
+                sh 'chmod -R u+rw . || echo "Error changing permissions"'
+            }
+        }
+        
+        stage('Publish Report') {
+            steps {
+                unstash 'report'
+                step([$class: 'JUnitResultArchiver', testResults: 'codeScanner/ReportGenerator/reports/*.xml'])
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: 'codeScanner/ReportGenerator/reports', reportFiles: 'index.html', reportName: 'IAC Code Scanner Report'])
+            }
+        }
+    }
+}
