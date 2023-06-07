@@ -1,4 +1,4 @@
-from extension import db
+from .extension import db
 from sqlalchemy import UniqueConstraint
 
 class Report(db.Model):
