@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app, send_from_directory, render_template ,render_template_string, url_for
 from .models import Report, IssueCount
 from .extension import db
-from .collections import Counter
+from collections import Counter
 import os
 
 report_blueprint = Blueprint('report_blueprint', __name__)
