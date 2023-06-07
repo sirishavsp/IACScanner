@@ -1,5 +1,7 @@
 import argparse
 import traceback
+from unused.securityScanner import *
+from tabulate import tabulate
 from codeScanner.code_validator import *
 import os
 import logging
@@ -7,7 +9,7 @@ import requests
 import json
 
 def main():
-    directory = "Test/Testfiles"
+    directory = "Test/TestFiles"
 
     # Check if the specified path is a directory
     if not os.path.isdir(directory):
@@ -38,7 +40,7 @@ def main():
                     results.extend(scan_results)
 
                     # Generate report for the current file
-                    report_url = f"http://localhost:8080/generate_report/{filename}"
+                    report_url = f"http://52.23.195.202:5000/generate_report/{filename}"
                     response = requests.post(report_url, json={'results': results}, headers={'Content-Type': 'application/json'})
 
                     if response.status_code == 200:
