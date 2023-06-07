@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pie Chart</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            width: 400px;
+            height: 400px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 400px;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <canvas id="myChart"></canvas>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Issue</th>
+                <th>Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for issue, count in issue_counts.items() %}
+                <tr>
+                    <td>{{ issue }}</td>
+                    <td>{{ count }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <script>
+        const issueCounts = {{ issue_counts | tojson | safe }};
+        const issueLabels = Object.keys(issueCounts);
+        const issueData = Object.values(issueCounts);
+
+        const uniqueColors = generateUniqueColors(issueLabels.length);
+
+        const ctx = document.getElementById('myChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: issueLabels,
+                datasets: [{
+                    data: issueData,
+                    backgroundColor: uniqueColors,
+                }]
+            },
+            options: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                },
+            },
+        });
+
+        function generateUniqueColors(count) {
+            const colors = [];
+            const goldenRatio = (1 + Math.sqrt(5)) / 2;
+            for (let i = 0; i < count; i++) {
+                const hue = (i * goldenRatio) % 1;
+                const saturation = 0.6;
+                const lightness = 0.6;
+                const color = `hsl(${hue * 360}, ${saturation * 100}%, ${lightness * 100}%)`;
+                colors.push(color);
+            }
+            return colors;
+        }
+    </script>
+</body>
+</html>

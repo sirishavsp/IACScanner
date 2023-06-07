@@ -1,9 +1,10 @@
 import os
 import re
-import stat
 import os
 import re
 from urllib.parse import urlparse
+import os
+import hcl
 
 def test_warn_if_insecure_permissions(file_path):
     """
@@ -18,71 +19,101 @@ def test_warn_if_insecure_permissions(file_path):
     if not os.path.exists(file_path):
         return []  # File does not exist, return empty list
 
-    insecure_permissions = {"read": ["group", "other"], "write": ["group", "other"], "execute": ["other"]}
     issues = []
 
-    with open(file_path, "r") as f:
-        content = f.read()
-        for line in content.split("\n"):
-            if "user_data" in line:
-                script_path = line.split("=")[1].strip().strip('"').replace("file://", "")
-                if os.path.exists(script_path):
-                    st = os.stat(script_path)
-                    mode = st.st_mode
-                    for perm, user in insecure_permissions.items():
-                        if mode & getattr(stat, "S_I" + perm.upper()) and any(mode & getattr(stat, "S_I" + "GRP" + u.upper()) for u in user):
-                            issues.append({
-                                "issue": "Insecure file permissions found",
-                                "severity": "High",
-                                "line_number": content.count('\n', 0, content.index(line)) + 1,
-                                "recommendation": "Ensure that sensitive files and directories have proper permissions set (e.g. 0600 for files, 0700 for directories)"
-                            })
-                else:
-                    issues.append({
-                        "issue": "Script file not found",
-                        "severity": "High",
-                        "line_number": content.count('\n', 0, content.index(line)) + 1,
-                        "recommendation": "Ensure that the script file exists and the path is correct"
-                    })
+    with open(file_path, 'r') as fp:
+        file_contents = fp.read()
+        parsed_hcl = hcl.loads(file_contents)
+
+    for resource_type, resources in parsed_hcl.get('resource', {}).items():
+        if resource_type != 'aws_s3_bucket':
+            continue  # Skip non-S3 resources
+        for resource_name, resource in resources.items():
+            versioning_enabled = resource.get('versioning', {}).get('enabled', False)
+            if not versioning_enabled:
+                resource_declaration = f'resource "aws_s3_bucket" "{resource_name}"'
+                line_number = file_contents.count('\n', 0, file_contents.index(resource_declaration)) + 1
+                issues.append({
+                    "issue": "Insecure S3 bucket permissions found",
+                    "severity": "High",
+                    "line_number": line_number,
+                    "resource_name": resource_name,
+                    "recommendation": "Enable versioning on your S3 bucket to prevent unintended data loss."
+                })
 
     return issues
 
 
-def test_check_for_insecure_services(file_path):
-    """
-    Checks for the use of insecure services in the specified file path.
 
-    Parameters:
-    file_path (str): The path to the file to check.
 
-    Returns:
-    List of dictionaries: A list of dictionaries containing the issue details, including issue, severity, line number, and recommendation.
-    """
-    if not os.path.exists(file_path):
-        return []  # File does not exist, return empty list
+# Define the mappings outside of the function to make it easy to update
+INSECURE_SERVICE_PORTS = {
+    20: "FTP Data Transfer",
+    21: "FTP Control",
+    22: "SSH (if not properly secured)",
+    23: "Telnet",
+    25: "SMTP (Use SMTPS instead)",
+    80: "HTTP",
+    110: "POP3 (Use POP3S instead)",
+    143: "IMAP (Use IMAPS instead)",
+    389: "LDAP (Use LDAPS or LDAP with STARTTLS instead)",
+    465: "SMTPS (Deprecated, Use SMTP with STARTTLS instead)",
+    636: "LDAPS (Deprecated, Use LDAP with STARTTLS instead)",
+    989: "FTPS Data Transfer (Deprecated, Use FTP with explicit SSL/TLS instead)",
+    990: "FTPS Control (Deprecated, Use FTP with explicit SSL/TLS instead)",
+    992: "Telnet over SSL/TLS (Deprecated)",
+    993: "IMAPS (Deprecated, Use IMAP with STARTTLS instead)",
+    995: "POP3S (Deprecated, Use POP3 with STARTTLS instead)"
+}
 
-    # Regular expression pattern to match insecure services
-    pattern = r"\b(http|ftp|telnet):\/\/\b"
-    regex = re.compile(pattern)
+def test_check_for_insecure_services(file_paths):
+    insecure_services = []
+   
+    for file_path in file_paths:
+        if not os.path.isfile(file_path):
+            continue
 
-    # Create a list to hold the results
-    results = []
+        with open(file_path, "r") as f:
+            terraform_code = hcl.load(f)  # Load the file as HCL
 
-    try:
-        with open(file_path, 'r') as f:
-            for line_num, line in enumerate(f, start=1):
-                matches = regex.finditer(line)
-                for match in matches:
-                    results.append({
-                        "issue": "Insecure services detected in EC2 instances",
-                        "severity": "High",
-                        "line_number": line_num,
-                        "recommendation": "Use secure protocols (e.g. HTTPS) to connect to services instead of insecure protocols (e.g. HTTP)"
-                    })
-    except IOError:
-        print(f"Could not read file: {file_path}")
-        
-    return results
+        # Check each resource in the file
+        for resource_type, resource_list in terraform_code.get('resource', {}).items():
+            for resource_name, resource_body in resource_list.items():
+
+                # Check AWS security groups for insecure ingress ports
+                if resource_type == 'aws_security_group':
+                    for ingress in resource_body.get('ingress', []):
+                        from_port = ingress.get('from_port')
+                        to_port = ingress.get('to_port')
+
+                        # Check if the ports are insecure
+                        if from_port in INSECURE_SERVICE_PORTS or to_port in INSECURE_SERVICE_PORTS:
+                            insecure_service = {
+                                "issue": f"Insecure service detected in resource {resource_name} of type {resource_type} in file: {file_path}",
+                                "severity": "High",
+                                "line_number": "Unknown",  # Line numbers are not available when parsing HCL
+                                "line_content": f"From port: {from_port}, To port: {to_port}",
+                                "service": INSECURE_SERVICE_PORTS.get(from_port, INSECURE_SERVICE_PORTS.get(to_port)),
+                                "recommendation": "Consider changing the ports to a secure service"
+                            }
+                            insecure_services.append(insecure_service)
+
+                # Check AWS DB instances for hardcoded passwords
+                if resource_type == 'aws_db_instance':
+                    if 'password' in resource_body:
+                        insecure_service = {
+                            "issue": f"Hardcoded password detected in resource {resource_name} of type {resource_type} in file: {file_path}",
+                            "severity": "High",
+                            "line_number": "Unknown",  # Line numbers are not available when parsing HCL
+                            "line_content": f"Password: {resource_body['password']}",
+                            "service": "Database",
+                            "recommendation": "Avoid hardcoding passwords. Consider using a secure method to store and retrieve passwords, such as AWS Secrets Manager or HashiCorp Vault."
+                        }
+                        insecure_services.append(insecure_service)
+
+    return insecure_services
+
+
 
 def test_check_for_security_issues(file_path):
     """
@@ -99,36 +130,46 @@ def test_check_for_security_issues(file_path):
 
     results = []
 
-    with open(file_path, "r") as f:
-        content = f.read()
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+    with open(file_path, 'r') as file:
+        content = file.read()
+    ip_regex = r"(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d{1,2})?)"
 
-    # Check for hardcoded credentials
-    credentials_regex = r"(?i)(?:password|access_key|secret_key|token)\s*=\s*[\"']?\w+[\"']?"
-    for match in re.finditer(credentials_regex, content):
-        results.append({
-            "issue": "Hardcoded credentials",
-            "severity": "High",
-            "line_number": content.count('\n', 0, match.start()) + 1,
-            "recommendation": "Avoid hardcoding credentials. Use environment variables or other secure mechanisms."
-        })
+    for i, line in enumerate(lines):
+        matches = re.findall(ip_regex, line)
+        for match in matches:
+            results.append({
+                "issue": "Hardcoded IPs or Domains",
+                "severity": "High",
+                "line_number": i + 1,
+                "recommendation": "Avoid hardcoding IP addresses or domain names. Use variables or other secure mechanisms."
+            })
 
     # Check for unrestricted ingress
     ingress_regex = r"cidr_blocks\s*=\s*\[\"0\.0\.0\.0/0\"\]"
-    if re.search(ingress_regex, content):
+    match = re.search(ingress_regex, content)
+    if match:
+        match_group = match.group()
+        line_number = content[:content.index(match_group)].count('\n') + 1
         results.append({
             "issue": "Unrestricted ingress",
             "severity": "Medium",
-            "line_number": content.index(re.search(ingress_regex, content).group()),
+            "line_number": line_number,
             "recommendation": "Avoid using unrestricted ingress rules. Restrict access to specific IP ranges or security groups."
         })
 
+
     # Check for deprecated software/services
     deprecated_regex = r"(?i)deprecated|no_longer_maintained|insecure"
-    if re.search(deprecated_regex, content):
+    match = re.search(deprecated_regex, content)
+    if match:
+        match_group = match.group()
+        line_number = content[:content.index(match_group)].count('\n') + 1
         results.append({
             "issue": "Use of deprecated or insecure software/services",
             "severity": "Medium",
-            "line_number": content.index(re.search(deprecated_regex, content).group()),
+            "line_number": line_number,
             "recommendation": "Avoid using deprecated or insecure software/services. Use supported and secure alternatives."
         })
 
@@ -138,7 +179,7 @@ def test_check_for_security_issues(file_path):
         results.append({
             "issue": "Missing encryption configuration",
             "severity": "Medium",
-            "line_number": 0,
+            "line_number": 1,
             "recommendation": "Enable encryption for data storage resources (e.g., databases, S3 buckets) to protect sensitive data."
         })
 
@@ -148,7 +189,7 @@ def test_check_for_security_issues(file_path):
         results.append({
             "issue": "Missing logging and monitoring configuration",
             "severity": "Low",
-            "line_number": 0,
+            "line_number": 1,
             "recommendation": "Enable appropriate logging and monitoring configurations (e.g., AWS CloudTrail) for better visibility and security."
         })
 
@@ -182,101 +223,104 @@ def test_check_for_security_issues(file_path):
         results.append({
             "issue": "Sensitive data exposure",
             "severity": "High",
-            "line_number": content.count('\n', 0, match.start()) + 1,
+            "line_number": content[:match.start()].count('\n') + 1,
             "recommendation": "Avoid exposing sensitive data. Store credentials and secrets securely using tools like secrets managers or parameter stores."
         })
 
-    # Check for cloud service misconfigurations
     cloud_service_regex = r"(?i)aws_[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\."
     cloud_service_matches = re.finditer(cloud_service_regex, content)
     for match in cloud_service_matches:
         results.append({
             "issue": "Cloud service misconfiguration",
             "severity": "Medium",
-            "line_number": content.count('\n', 0, match.start()) + 1,
+            "line_number": content[:match.start()].count('\n') + 1,
             "recommendation": "Ensure proper configuration of cloud services (e.g., AWS S3 buckets, databases) to enforce security controls and prevent unauthorized access."
         })
 
-    # Check for secure communication
+
     insecure_communication_regex = r"(?i)protocol\s*=\s*\"http\""
     if re.search(insecure_communication_regex, content):
+        match = re.search(insecure_communication_regex, content)
         results.append({
             "issue": "Insecure communication",
             "severity": "Medium",
-            "line_number": content.index(re.search(insecure_communication_regex, content).group()),
+            "line_number": content[:match.start()].count('\n') + 1,
             "recommendation": "Use secure communication protocols (e.g., HTTPS) instead of plain HTTP to protect data in transit."
         })
 
-    # Check for version control exclusions
     version_control_exclude_regex = r"(?i)exclude\s*=\s*\[\".+\"\]"
     if re.search(version_control_exclude_regex, content):
+        match = re.search(version_control_exclude_regex, content)
         results.append({
             "issue": "Version control exclusions",
             "severity": "Low",
-            "line_number": content.index(re.search(version_control_exclude_regex, content).group()),
+            "line_number": content[:match.start()].count('\n') + 1,
             "recommendation": "Avoid excluding Terraform files or directories from version control. Ensure all code changes are tracked and reviewed for security."
         })
+
 
     return results
 
 
+# Define the mappings outside of the function to make it easy to update
+UNENCRYPTED_PROTOCOL_PORTS = {
+    20: "FTP Data Transfer",
+    21: "FTP Control",
+    23: "Telnet",
+    80: "HTTP",
+    110: "POP3 (Use secure version: POP3S)",
+    135: "Microsoft RPC (potential for numerous vulnerabilities)",
+    137: "NetBIOS Name Service (potential for information leaks and DoS attacks)",
+    138: "NetBIOS Datagram Service (potential for information leaks and DoS attacks)",
+    139: "NetBIOS Session Service/SMB (potential for numerous vulnerabilities, use SMB over IP, port 445)",
+    161: "SNMP (potential for information leaks, use SNMPv3)",
+    389: "LDAP (Use secure version: LDAPS on port 636)",
+    443: "HTTPS (potential for vulnerabilities if SSL/TLS versions are not kept up-to-date)",
+    445: "Microsoft SMB over IP (potential for numerous vulnerabilities if not secured)",
+    515: "Line Printer Daemon (potential for numerous vulnerabilities)",
+    1433: "Microsoft SQL Server (potential for numerous vulnerabilities if not secured)",
+    1521: "Oracle Database Server (potential for numerous vulnerabilities if not secured)",
+    2049: "Network File System (NFS, potential for numerous vulnerabilities if not secured)",
+    3306: "MySQL (potential for numerous vulnerabilities if not secured)",
+    3389: "Microsoft RDP (potential for numerous vulnerabilities if not secured)",
+    5432: "PostgreSQL (potential for numerous vulnerabilities if not secured)",
+    5900: "VNC (potential for numerous vulnerabilities if not secured)",
+    6000: "X11 (potential for numerous vulnerabilities if not secured)"
+}
+
 def test_warn_if_unencrypted_network_protocols(file_paths):
-    """
-    Checks for unencrypted network protocols in the specified file paths.
-
-    Parameters:
-    file_paths (list): A list of file paths to check.
-
-    Returns:
-    List of dictionaries: A list of dictionaries containing details of any insecure network protocols found.
-    """
-
     insecure_network_protocols = []
-
-    insecure_protocol_patterns = [
-        {
-            "protocol": "http",
-            "regex_pattern": r"(?i)\bhttp://",
-            "severity": "High",
-            "recommendation": "Replace HTTP with a secure protocol such as HTTPS."
-        },
-        {
-            "protocol": "ftp",
-            "regex_pattern": r"(?i)\bftp://",
-            "severity": "High",
-            "recommendation": "Avoid using unencrypted FTP. Consider using SFTP or FTPS instead."
-        },
-        {
-            "protocol": "telnet",
-            "regex_pattern": r"(?i)\btelnet://",
-            "severity": "High",
-            "recommendation": "Avoid using unencrypted Telnet. Use SSH for secure remote access."
-        },
-        # Add more insecure protocol patterns as needed
-    ]
-
+    
     for file_path in file_paths:
         if not os.path.isfile(file_path):
             continue
 
         with open(file_path, "r") as f:
-            for line_num, line in enumerate(f, start=1):
-                line = line.strip()
-                for protocol_pattern in insecure_protocol_patterns:
-                    matches = re.finditer(protocol_pattern["regex_pattern"], line)
-                    for match in matches:
-                        protocol = match.group()
-                        issue = {
-                            "issue": f"Potentially unencrypted or unauthenticated {protocol.upper()} network protocol found in file: {file_path}",
-                            "severity": protocol_pattern["severity"],
-                            "line_number": line_num,
-                            "line_content": line,
-                            "protocol": protocol,
-                            "recommendation": protocol_pattern["recommendation"]
-                        }
-                        insecure_network_protocols.append(issue)
+            terraform_code = hcl.load(f)
 
-    return insecure_network_protocols
+        # Check each resource in the file
+        for resource_type, resource_list in terraform_code.get('resource', {}).items():
+            for resource_name, resource_body in resource_list.items():
+
+                # Check AWS security groups for insecure ingress ports
+                if resource_type == 'aws_security_group':
+                    for ingress in resource_body.get('ingress', []):
+                        from_port = ingress.get('from_port')
+                        to_port = ingress.get('to_port')
+
+                        # Check if the ports are insecure
+                        if from_port in UNENCRYPTED_PROTOCOL_PORTS or to_port in UNENCRYPTED_PROTOCOL_PORTS:
+                            unencrypted_protocol = {
+                                "issue": f"Potentially unencrypted or unauthenticated network protocol found in resource {resource_name} of type {resource_type} in file: {file_path}",
+                                "severity": "High",
+                                "line_number": "Unknown",  # Line numbers are not available when parsing HCL
+                                "line_content": f"From port: {from_port}, To port: {to_port}",
+                                "protocol": UNENCRYPTED_PROTOCOL_PORTS.get(from_port, UNENCRYPTED_PROTOCOL_PORTS.get(to_port)),
+                                "recommendation": "Replace the unencrypted protocol with a secure protocol."
+                            }
+                            insecure_network_protocols.append(unencrypted_protocol)
+
+
 import re
 import logging
 

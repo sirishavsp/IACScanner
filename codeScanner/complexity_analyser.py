@@ -19,7 +19,9 @@ def analyze_terraform_code(file_path: str) -> List[Dict[str, Union[str, int]]]:
     results = []
 
     # Code Complexity Analysis
-    complexity_results = cc_visit(file_path)
+    with open(file_path, 'r') as file:
+        code = file.read()
+    complexity_results = cc_visit(code)
     for result in complexity_results:
         if result.complexity >= 10:  # Adjust the complexity threshold as per your needs
             results.append({

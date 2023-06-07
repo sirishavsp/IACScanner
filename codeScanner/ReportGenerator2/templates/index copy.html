@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IaC Security Scanner - Terraform Files</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f5f5f5;
+        }
+        .table th, .table td {
+            vertical-align: middle;
+        }
+        .result-pass {
+            color: green;
+        }
+        .result-fail {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="/">IaC Security Scanner</a>
+    </nav>
+
+    <div class="container">
+        <h1 class="my-4">IaC Security Scanner: Terraform Files</h1>
+
+        <!-- Counts -->
+        <div class="row mb-4">
+            <div class="col">
+                <h4>Total Reports: {{ reports|length }}</h4>
+            </div>
+            <div class="col">
+                <h4>Pass: {{ reports|selectattr("1", "equalto", "Pass")|list|length }}</h4>
+            </div>
+            <div class="col">
+                <h4>Fail: {{ reports|selectattr("1", "equalto", "Fail")|list|length }}</h4>
+            </div>
+            
+        </div>
+
+        <!-- Table -->
+        <table id="results-table" class="table table-striped">
+            <thead class="thead-dark">
+                <tr>
+                    <th scope="col">File Name</th>
+                    <th scope="col">Report</th>
+                    <th scope="col">Result</th>
+                    <th scope="col">Issue Types</th> <!-- New column -->
+                </tr>
+            </thead>
+            <tbody>
+                {% for tf_file, status in reports %}
+                    <tr>
+                        <td>{{ tf_file }}</td>
+                        <td><a href="{{ url_for('static', filename='reports/' + tf_file) }}">View Report</a></td>
+                        <td class="result-{{ status.lower() }}">{{ status }}</td>
+                        <td><a href="{{ url_for('report_blueprint.pie_chart', filepath=tf_file) }}">View Pie Chart</a></td>
+                    </tr>
+                {% endfor %}
+                <tr>
+                    <td colspan="4"><a href="{{ url_for('consolidated_report') }}">View Consolidated Pie Chart</a></td>
+                </tr>
+                
+            </tbody>            
+        </table>
+    </div>
+</body>
+</html>

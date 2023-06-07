@@ -1,69 +1,81 @@
+import difflib
 import re
 from typing import List, Dict, Union
 from hcl import loads as parse_hcl
 from radon.complexity import cc_visit
 import networkx as nx
 from fuzzywuzzy import fuzz
+import re
+import subprocess
+import json
+from typing import List, Dict, Union
+from fuzzywuzzy import fuzz
+from typing import Tuple
+import bisect
 
-def extract_comments(file_contents: str) -> List[str]:
-    comment_pattern = r'#.*'
-    comments = re.findall(comment_pattern, file_contents)
-    return [comment.strip('#').strip() for comment in comments]
+def extract_comments(file_contents: str) -> List[Tuple[int, str]]:
+    comment_pattern = r'/\*([^*]|[\r\n]|(\*+([^*/]|[\r\n])))*\*+/'
+    comments = [(m.start(), m.group().strip('/*').strip()) 
+                for m in re.finditer(comment_pattern, file_contents, re.MULTILINE | re.DOTALL)]
+    line_starts = {i: m.start() for i, m in enumerate(re.finditer('\n', file_contents), start=1)}
+    line_starts[-1] = -1
+    comments = [(bisect.bisect(list(line_starts.values()), start), comment) for start, comment in comments]
+    return comments
 
 def find_duplicates(file_contents: str) -> List[Dict[str, Union[str, int]]]:
     results = []
     lines = file_contents.split("\n")
-    tokens = [re.findall(r'\w+|\S', line) for line in lines]  # Tokenize each line
 
-    # Compare tokens for duplicates
-    duplicates = set()
-    for i, line_tokens in enumerate(tokens):
-        if i in duplicates:
-            continue
-        for j in range(i + 1, len(tokens)):
-            if line_tokens == tokens[j]:
-                duplicates.add(j)
-                results.append({
-                    "issue": "Duplicate code detected",
-                    "severity": "Medium",
-                    "line_number": i + 1,
-                    "recommendation": f"Review the duplicate code at line {j + 1} and consider consolidating it"
-                                      f" into a reusable function or module."
-                                      f" Remove any unused code to improve the readability and maintainability"
-                                      f" of the Terraform file."
-                                      f" If the duplicate code is necessary, document the reasons for it."
-                                      f" Consider using Terraform modules to reduce duplication and improve"
-                                      f" reusability."
-                })
+    resource_blocks = {}
+    current_resource = None
+    current_keys = []
 
-    # Analyze duplicate resource blocks with different configurations
-    ast = parse_hcl(file_contents)
-    resource_blocks = ast.get("resource", [])
-    for i, block1 in enumerate(resource_blocks):
-        for j in range(i + 1, len(resource_blocks)):
-            block2 = resource_blocks[j]
-            if block1["type"] == block2["type"] and block1 != block2:
-                results.append({
-                    "issue": "Duplicate resource block with different configuration",
-                    "severity": "Medium",
-                    "line_number": block2["lineno"],
-                    "recommendation": f"Review the duplicate resource block at line {block2['lineno']}."
-                                      f" Ensure that the configurations are intended and make the necessary changes."
-                })
+    # Group lines by resource block
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        if stripped_line.startswith("resource"):
+            if current_resource:
+                resource_blocks[current_resource] = current_keys
+            current_resource = i
+            current_keys = []
+        elif current_resource is not None and '=' in stripped_line:
+            key = stripped_line.split('=')[0].strip()
+            current_keys.append(key)
 
-    comments = extract_comments(file_contents)
-    for i, comment in enumerate(comments):
-        for j in range(i + 1, len(comments)):
-            similarity = fuzz.token_set_ratio(comment, comments[j])
-            if similarity > 80:  # Adjust the threshold as per your needs
-                results.append({
-                    "issue": "Similar comments detected",
-                    "severity": "Low",
-                    "line_number": 0,
-                    "recommendation": f"Review the similar comments at lines {i+1} and {j+1}."
-                                      f" Consolidate or clarify the comments to improve code readability."
-                })
+    if current_resource:
+        resource_blocks[current_resource] = current_keys
 
+    # Compare hashes of key sets to find duplicates
+    seen_hashes = {}
+    for line_num, keys in resource_blocks.items():
+        keys_hash = hash(frozenset(keys))
+        if keys_hash in seen_hashes:
+            results.append({
+                "issue": "Duplicate resource block structure detected",
+                "severity": "Medium",
+                "line_number": seen_hashes[keys_hash] + 1,
+                "recommendation": f"Review the duplicate resource block structure at line {line_num + 1}."
+                                  f" Consider modifying the structure if not required."
+            })
+        else:
+            seen_hashes[keys_hash] = line_num
+        
+        comments = extract_comments(file_contents)
+        seen_comments = {}
+        for i, (line_num, comment) in enumerate(comments):
+            for seen_line_num, seen_comment in seen_comments.items():
+                similarity = difflib.SequenceMatcher(None, seen_comment, comment).ratio()
+                if similarity > 0.6:  # You may adjust this threshold as needed
+                    results.append({
+                        "issue": "Similar comments detected",
+                        "severity": "Low",
+                        "line_number": seen_line_num + 1,
+                        "recommendation": f"Review the similar comments at lines {seen_line_num+1} and {line_num+1}."
+                                        f" Consolidate or clarify the comments to improve code readability."
+                    })
+                    break
+            else:
+                seen_comments[line_num] = comment
     return results
 
 def analyze_duplicate_code(file_path: str) -> List[Dict[str, Union[str, int]]]:
@@ -76,52 +88,16 @@ def analyze_duplicate_code(file_path: str) -> List[Dict[str, Union[str, int]]]:
         # Perform code analysis
         duplicates = find_duplicates(file_contents)
 
-        # Parse Terraform code into an AST
-        ast = parse_hcl(file_contents)
-
-        # Perform code complexity analysis
-        complexity_results = cc_visit(file_path)
-        for result in complexity_results:
-            if result.complexity >= 10:  # Adjust the complexity threshold as per your needs
-                results.append({
-                    "issue": "High code complexity",
-                    "severity": "High",
-                    "line_number": result.lineno,
-                    "recommendation": f"Refactor the code at line {result.lineno} to reduce complexity."
-                })
-
-        # Perform dependency analysis
-        resource_graph = nx.DiGraph()
-
-        for block in ast.get("resource", []):
-            resource_type = block["type"]
-            resource_name = block.get("name", "")
-            resource_graph.add_node(resource_name)
-            # Add edges for dependencies
-            for dependency in block.get("depends_on", []):
-                resource_graph.add_edge(dependency, resource_name)
-
-        # Additional analysis or checks
-        # <Add any other analysis or checks as per your requirements>
+        # <Rest of the code> ...
 
         # Merge all analysis results
         results += duplicates
         # <Merge other analysis results to the 'results' list>
 
     except Exception as e:
-        # Handle any errors that may occur during analysis
-        results.append({
-            "issue": "Error occurred during analysis",
-            "severity": "High",
-            "line_number": 0,
-            "recommendation": str(e)
-        })
+        print("Error occured")
 
     return results
-
-import subprocess
-import json
-from typing import List, Dict, Union
 
 def test_check_for_insecure_system_access(file_path: str) -> List[Dict[str, Union[str, int]]]:
     """

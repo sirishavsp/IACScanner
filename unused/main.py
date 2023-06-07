@@ -1,7 +1,5 @@
 import argparse
-from unused.securityScanner import *
 from tabulate import tabulate
-from unused.report_generatory import *
 from codeScanner.code_validator import *
 import os
 import logging

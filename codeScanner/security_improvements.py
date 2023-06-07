@@ -20,12 +20,7 @@ def test_suggest_security_improvements(file_path: str) -> List[Dict[str, Union[s
     
     except Exception as e:
         error_message = str(e)
-        results.append({
-            "issue": "Error occurred during analysis",
-            "severity": "High",
-            "line_number": 0,
-            "recommendation": error_message
-        })
+     
 
     return results
 

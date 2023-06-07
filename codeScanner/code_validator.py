@@ -1,6 +1,7 @@
 from .security_checks import *
 from .complex_checks import *
 from .security_improvements import *
+from .complexity_analyser import *
 
 def run_terraform_scan(filepath):
     results = []
@@ -50,14 +51,14 @@ def run_terraform_scan(filepath):
     if unintended_destruction:
         results.extend(unintended_destruction)
 
-    # # Check for insecure system access
-    # insecure_system_access = test_check_for_insecure_system_access()
-    # if insecure_system_access:
-    #     results.extend(insecure_system_access)
+    # Check for insecure system access
+    insecure_system_access = test_check_for_insecure_system_access(filepath)
+    if insecure_system_access:
+        results.extend(insecure_system_access)
 
-    # # Check for insecure system access
-    # warn_if_vulnerable_libraries = test_warn_if_vulnerable_libraries()
-    # if warn_if_vulnerable_libraries:
-    #     results.extend(warn_if_vulnerable_libraries)
+    # Check for insecure system access
+    warn_if_vulnerable_libraries = test_warn_if_vulnerable_libraries(filepath)
+    if warn_if_vulnerable_libraries:
+        results.extend(warn_if_vulnerable_libraries)
 
     return results

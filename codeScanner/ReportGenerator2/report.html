@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IaC Security Scanner Results</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <!-- Include any additional CSS files or stylesheets -->
+</head>
+<body>
+    <div class="container">
+        <h1 class="mt-5">IaC Security Scanner Results</h1>
+        <table id="results-table" class="table">
+            <thead>
+                <tr>
+                    <th scope="col">Issue</th>
+                    <th scope="col">Severity</th>
+                    <th scope="col">Line Number</th>
+                    <th scope="col">Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in results %}
+                    <tr>
+                        <td>{{ result['issue']|truncate(30) }}</td>
+                        <td>{{ result['severity'] }}</td>
+                        <td>{{ result['line_number'] }}</td>
+                        <td>{{ result['recommendation'] }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Include any additional JavaScript files or scripts -->
+</body>
+</html>

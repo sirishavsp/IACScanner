@@ -1,7 +1,5 @@
 import argparse
 import traceback
-from unused.securityScanner import *
-from tabulate import tabulate
 from codeScanner.code_validator import *
 import os
 import logging
