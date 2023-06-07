@@ -1,7 +1,7 @@
 from flask import Flask, render_template
 import os
 from .extension import db
-from models import Report, IssueCount
+from .models import Report, IssueCount
 
 def create_app():
     app = Flask(__name__)
