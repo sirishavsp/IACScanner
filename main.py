@@ -40,7 +40,7 @@ def main():
                     results.extend(scan_results)
 
                     # Generate report for the current file
-                    report_url = f"http://52.23.195.202:5000/generate_report/{filename}"
+                    report_url = f"http://3.87.26.249:5000/generate_report/{filename}"
                     response = requests.post(report_url, json={'results': results}, headers={'Content-Type': 'application/json'})
 
                     if response.status_code == 200:
